@@ -1,0 +1,25 @@
+# Dependencies
+node_modules/
+frontend/node_modules/
+backend/__pycache__/
+backend/*.pyc
+
+# Environment variables
+.env
+.env.local
+
+# Uploads (don't push user photos to GitHub)
+uploads/
+sessions.json
+
+# Build files
+frontend/dist/
+frontend/build/
+
+# IDE
+.vscode/
+.idea/
+
+# OS
+.DS_Store
+Thumbs.db
