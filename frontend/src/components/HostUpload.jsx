@@ -5,8 +5,16 @@ function HostUpload() {
   const [files, setFiles] = useState([])
   const [previews, setPreviews] = useState([])
   const [uploading, setUploading] = useState(false)
+  const [uploadProgress, setUploadProgress] = useState(0)
   const [sessionData, setSessionData] = useState(null)
   const [dragActive, setDragActive] = useState(false)
+
+  // Session settings
+  const [sessionName, setSessionName] = useState('')
+  const [sessionMode, setSessionMode] = useState('browse')
+  const [welcomeMessage, setWelcomeMessage] = useState('')
+  const [themePrimary, setThemePrimary] = useState('#FF6B35')
+  const [themeSecondary, setThemeSecondary] = useState('#F7931E')
 
   const apiUrl = import.meta.env.VITE_API_URL || ''
 
@@ -25,14 +33,9 @@ function HostUpload() {
     e.stopPropagation()
     setDragActive(false)
 
-    console.log('Drop event files:', e.dataTransfer.files.length)
-    
     const droppedFiles = Array.from(e.dataTransfer.files).filter(
       file => file.type.startsWith('image/')
     )
-
-    console.log('Filtered image files:', droppedFiles.length)
-    console.log('Files:', droppedFiles.map(f => f.name))
 
     if (droppedFiles.length > 0) {
       addFiles(droppedFiles)
@@ -47,14 +50,18 @@ function HostUpload() {
   }
 
   const addFiles = (newFiles) => {
-    console.log('Adding files:', newFiles.length)
-    
+    // Check limit (100 photos)
+    const totalFiles = files.length + newFiles.length
+    if (totalFiles > 100) {
+      alert(`Maximum 100 photos allowed. You tried to add ${newFiles.length} photos but only ${100 - files.length} slots available.`)
+      newFiles = newFiles.slice(0, 100 - files.length)
+    }
+
     setFiles(prev => [...prev, ...newFiles])
 
-    newFiles.forEach((file, index) => {
+    newFiles.forEach((file) => {
       const reader = new FileReader()
       reader.onload = (e) => {
-        console.log('Preview loaded for:', file.name)
         setPreviews(prev => [...prev, { file: file.name, url: e.target.result }])
       }
       reader.readAsDataURL(file)
@@ -67,18 +74,40 @@ function HostUpload() {
   }
 
   const handleUpload = async () => {
-    if (files.length === 0) return
+    if (files.length === 0) {
+      alert('Please select at least one photo')
+      return
+    }
+
+    if (!sessionName.trim()) {
+      alert('Please enter an event name')
+      return
+    }
 
     setUploading(true)
+    setUploadProgress(0)
 
     const formData = new FormData()
+    
+    // Add files
     files.forEach(file => {
       formData.append('files', file)
     })
 
+    // Add session settings
+    formData.append('session_name', sessionName)
+    formData.append('session_mode', sessionMode)
+    if (welcomeMessage) formData.append('welcome_message', welcomeMessage)
+    formData.append('theme_primary', themePrimary)
+    formData.append('theme_secondary', themeSecondary)
+
     try {
       const response = await axios.post(`${apiUrl}/api/host/create-session`, formData, {
-        headers: { 'Content-Type': 'multipart/form-data' }
+        headers: { 'Content-Type': 'multipart/form-data' },
+        onUploadProgress: (progressEvent) => {
+          const percentCompleted = Math.round((progressEvent.loaded * 100) / progressEvent.total)
+          setUploadProgress(percentCompleted)
+        }
       })
 
       setSessionData(response.data)
@@ -92,38 +121,51 @@ function HostUpload() {
 
   const copyLink = () => {
     navigator.clipboard.writeText(sessionData.share_url)
-    alert('Link copied to clipboard!')
+    alert('Link copied to clipboard! 🎉')
   }
 
   const resetForm = () => {
     setFiles([])
     setPreviews([])
     setSessionData(null)
+    setSessionName('')
+    setWelcomeMessage('')
+    setUploadProgress(0)
   }
 
   if (sessionData) {
     return (
       <div className="container">
         <div className="success-message">
-          <h1>Session Created Successfully!</h1>
-          <p style={{ fontSize: '1.2rem', margin: '20px 0' }}>
-            Uploaded {sessionData.photo_count} photos
+          <h1>🎉 Session Created!</h1>
+          <p style={{ fontSize: '1.3rem', margin: '20px 0', fontWeight: '600' }}>
+            {sessionData.photo_count} photos uploaded successfully
           </p>
+
+          <div style={{ margin: '30px 0', padding: '20px', background: 'white', borderRadius: '12px' }}>
+            <p style={{ fontWeight: '600', marginBottom: '10px', color: '#333' }}>Event: {sessionName}</p>
+            <p style={{ fontSize: '0.9rem', color: '#666' }}>
+              Mode: {sessionMode === 'privacy' ? '🔐 Privacy Mode - Users see only their photos' : '👀 Browse Mode - Users can see all photos'}
+            </p>
+            <p style={{ fontSize: '0.9rem', color: '#666', marginTop: '5px' }}>
+              Expires: {new Date(sessionData.expires_at).toLocaleDateString()}
+            </p>
+          </div>
 
           <div className="share-link">
             <input
               type="text"
               value={sessionData.share_url}
               readOnly
+              onClick={(e) => e.target.select()}
             />
             <button onClick={copyLink} className="btn btn-secondary">
-              Copy Link
+              📋 Copy Link
             </button>
           </div>
 
-          <p style={{ margin: '20px 0', color: '#666' }}>
-            Share this link with your friends so they can upload their selfie
-            and find photos they're in!
+          <p style={{ margin: '20px 0', color: '#666', fontSize: '1.1rem' }}>
+            Share this link with your guests so they can find their photos! 📸
           </p>
 
           <button onClick={resetForm} className="btn btn-primary">
@@ -136,13 +178,71 @@ function HostUpload() {
 
   return (
     <div className="container">
-  <h1>Photo Matcher</h1>
-  <h2>Upload photos and create a shareable link</h2>
-  <p style={{ textAlign: 'center', color: '#666', fontSize: '1.1rem', marginBottom: '30px', lineHeight: '1.6' }}>
-    Upload event photos, get a shareable link. Friends upload their selfie and instantly see only photos they appear in using AI face recognition.
-  </p>
+      <h1>📸 Photo Matcher</h1>
+      <p className="subtitle">
+        Upload event photos, get a shareable link. Your guests upload selfies and AI finds their photos automatically.
+      </p>
 
+      {/* Session Settings Form */}
+      <div style={{ marginBottom: '30px', padding: '25px', background: 'linear-gradient(135deg, #FFF5F0 0%, #FFFAF5 100%)', borderRadius: '16px' }}>
+        <h3 style={{ marginBottom: '20px', color: '#FF6B35' }}>⚙️ Event Settings</h3>
+        
+        <div className="form-group">
+          <label>Event Name *</label>
+          <input
+            type="text"
+            placeholder="e.g., Priya & Rahul's Wedding"
+            value={sessionName}
+            onChange={(e) => setSessionName(e.target.value)}
+            maxLength={100}
+          />
+        </div>
 
+        <div className="form-group">
+          <label>Mode</label>
+          <select value={sessionMode} onChange={(e) => setSessionMode(e.target.value)}>
+            <option value="browse">👀 Browse Mode - Guests can see all photos</option>
+            <option value="privacy">🔐 Privacy Mode - Guests see only their photos</option>
+          </select>
+          <p style={{ fontSize: '0.85rem', color: '#666', marginTop: '5px' }}>
+            {sessionMode === 'privacy' 
+              ? 'Privacy mode: Guests must upload selfie to see any photos'
+              : 'Browse mode: Guests can browse all photos, selfie helps download their photos'}
+          </p>
+        </div>
+
+        <div className="form-group">
+          <label>Welcome Message (Optional)</label>
+          <textarea
+            placeholder="e.g., Welcome! Upload your selfie to find all your photos from our special day 💖"
+            value={welcomeMessage}
+            onChange={(e) => setWelcomeMessage(e.target.value)}
+            rows={3}
+            maxLength={500}
+          />
+        </div>
+
+        <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '15px' }}>
+          <div className="form-group">
+            <label>Primary Color</label>
+            <input
+              type="color"
+              value={themePrimary}
+              onChange={(e) => setThemePrimary(e.target.value)}
+            />
+          </div>
+          <div className="form-group">
+            <label>Secondary Color</label>
+            <input
+              type="color"
+              value={themeSecondary}
+              onChange={(e) => setThemeSecondary(e.target.value)}
+            />
+          </div>
+        </div>
+      </div>
+
+      {/* Photo Upload Area */}
       <div
         className={`dropzone ${dragActive ? 'active' : ''}`}
         onDragEnter={handleDrag}
@@ -155,6 +255,9 @@ function HostUpload() {
           <div className="dropzone-icon">📸</div>
           <h3>Drag & drop photos here</h3>
           <p>or click to select files</p>
+          <p style={{ fontSize: '0.85rem', color: '#999', marginTop: '10px' }}>
+            Maximum 100 photos • JPG, PNG supported
+          </p>
         </div>
       </div>
 
@@ -168,31 +271,50 @@ function HostUpload() {
 
       {previews.length > 0 && (
         <div>
-          <h3>Selected Photos ({previews.length})</h3>
+          <h3 style={{ color: '#333', marginBottom: '15px' }}>
+            Selected Photos ({previews.length}/100)
+          </h3>
+          
+          {uploading && (
+            <div>
+              <p style={{ marginBottom: '10px', color: '#666' }}>
+                Uploading... {uploadProgress}%
+              </p>
+              <div className="progress-bar">
+                <div className="progress-fill" style={{ width: `${uploadProgress}%` }}></div>
+              </div>
+            </div>
+          )}
+
           <div className="preview-grid">
             {previews.map((preview, index) => (
               <div key={index} className="preview-item">
                 <img src={preview.url} alt={`Preview ${index + 1}`} />
-                <button
-                  className="remove-btn"
-                  onClick={(e) => {
-                    e.stopPropagation()
-                    removeFile(index)
-                  }}
-                >
-                  ×
-                </button>
+                {!uploading && (
+                  <button
+                    className="remove-btn"
+                    onClick={(e) => {
+                      e.stopPropagation()
+                      removeFile(index)
+                    }}
+                  >
+                    ×
+                  </button>
+                )}
               </div>
             ))}
           </div>
 
-          <button
-            onClick={handleUpload}
-            disabled={uploading}
-            className="btn btn-primary"
-          >
-            {uploading ? 'Uploading...' : `Upload ${files.length} Photos`}
-          </button>
+          <div style={{ marginTop: '30px', textAlign: 'center' }}>
+            <button
+              onClick={handleUpload}
+              disabled={uploading || !sessionName.trim()}
+              className="btn btn-primary"
+              style={{ fontSize: '1.1rem', padding: '16px 40px' }}
+            >
+              {uploading ? `Uploading... ${uploadProgress}%` : `🚀 Upload ${files.length} Photos`}
+            </button>
+          </div>
         </div>
       )}
     </div>

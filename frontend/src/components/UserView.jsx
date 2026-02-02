@@ -7,38 +7,61 @@ function UserView() {
   const { sessionId } = useParams()
   const [session, setSession] = useState(null)
   const [photos, setPhotos] = useState([])
+  const [currentPage, setCurrentPage] = useState(1)
+  const [totalPages, setTotalPages] = useState(1)
+  const [totalPhotos, setTotalPhotos] = useState(0)
+  
   const [selfieFile, setSelfieFile] = useState(null)
   const [selfiePreview, setSelfiePreview] = useState(null)
   const [processing, setProcessing] = useState(false)
-  const [matchedPhotos, setMatchedPhotos] = useState([])
-  const [userFaceDescriptor, setUserFaceDescriptor] = useState(null)
-  const [showMatches, setShowMatches] = useState(false)
-  const selfieImageRef = useRef(null)
+  const [matchedPhotoIds, setMatchedPhotoIds] = useState([])
+  const [showOnlyMyPhotos, setShowOnlyMyPhotos] = useState(false)
+const [processingProgress, setProcessingProgress] = useState(0)
+const [processingStatus, setProcessingStatus] = useState('')
 
+  const [downloadingAll, setDownloadingAll] = useState(false)
+  const [downloadingSelection, setDownloadingSelection] = useState(false)
+  
+  const selfieImageRef = useRef(null)
   const apiUrl = import.meta.env.VITE_API_URL || ''
 
   useEffect(() => {
     loadSession()
   }, [sessionId])
 
+  useEffect(() => {
+    if (session) {
+      loadPhotos(currentPage)
+    }
+  }, [currentPage, session])
+
   const loadSession = async () => {
     try {
-      const [sessionRes, photosRes] = await Promise.all([
-        axios.get(`${apiUrl}/api/session/${sessionId}`),
-        axios.get(`${apiUrl}/api/session/${sessionId}/photos`)
-      ])
-
-      setSession(sessionRes.data)
-      
-      // Update photo URLs to include apiUrl
-      const photosWithFullUrls = photosRes.data.photos.map(photo => ({
-        ...photo,
-        url: `${apiUrl}${photo.url}`
-      }))
-      setPhotos(photosWithFullUrls)
+      const response = await axios.get(`${apiUrl}/api/session/${sessionId}`)
+      setSession(response.data)
     } catch (error) {
       console.error('Error loading session:', error)
-      alert('Session not found')
+      alert('Session not found or expired')
+    }
+  }
+
+  const loadPhotos = async (page) => {
+    try {
+      const response = await axios.get(
+        `${apiUrl}/api/session/${sessionId}/photos?page=${page}&per_page=10`
+      )
+      
+      const photosWithUrls = response.data.photos.map(photo => ({
+        ...photo,
+        thumbnail_url: `${apiUrl}${photo.thumbnail_url}`,
+        original_url: `${apiUrl}${photo.original_url}`
+      }))
+      
+      setPhotos(photosWithUrls)
+      setTotalPages(response.data.pagination.total_pages)
+      setTotalPhotos(response.data.pagination.total_photos)
+    } catch (error) {
+      console.error('Error loading photos:', error)
     }
   }
 
@@ -55,81 +78,162 @@ function UserView() {
     reader.readAsDataURL(file)
   }
 
-  const processSelfie = async () => {
-    if (!selfieFile || !selfieImageRef.current) return
+const processSelfie = async () => {
+  if (!selfieFile || !selfieImageRef.current) return
 
-    setProcessing(true)
-    setShowMatches(false)
+  setProcessing(true)
+  setProcessingProgress(0)
+  setProcessingStatus('Loading face detection models...')
 
-    try {
-      console.log('Detecting face in selfie...')
-      const selfieDetection = await detectFace(selfieImageRef.current)
+  try {
+    setProcessingStatus('🔍 Detecting face in your selfie...')
+    setProcessingProgress(5)
+    
+    const selfieDetection = await detectFace(selfieImageRef.current)
 
-      if (!selfieDetection) {
-        alert('No face detected in selfie. Please upload a clearer photo.')
-        setProcessing(false)
-        return
-      }
+    if (!selfieDetection) {
+      alert('No face detected in selfie. Please upload a clearer photo with your face visible.')
+      setProcessing(false)
+      return
+    }
 
-      console.log('Face detected in selfie!')
-      setUserFaceDescriptor(selfieDetection.descriptor)
+    setProcessingStatus('✓ Face detected! Loading all photos...')
+    setProcessingProgress(10)
 
-      const matches = []
+    // Gallery-based matching
+    const referenceGallery = [selfieDetection.descriptor]
+    const matched = []
+    const MATCH_THRESHOLD = 0.7
+    const GALLERY_THRESHOLD = 0.4
 
-      for (const photo of photos) {
-        try {
-          const img = new Image()
-          img.crossOrigin = 'anonymous'
+    // Load all photos
+    const allPhotosToCheck = []
+    for (let page = 1; page <= totalPages; page++) {
+      const response = await axios.get(
+        `${apiUrl}/api/session/${sessionId}/photos?page=${page}&per_page=10`
+      )
+      const pagePhotos = response.data.photos.map(photo => ({
+        ...photo,
+        thumbnail_url: `${apiUrl}${photo.thumbnail_url}`,
+        original_url: `${apiUrl}${photo.original_url}`
+      }))
+      allPhotosToCheck.push(...pagePhotos)
+      
+      const loadProgress = 10 + ((page / totalPages) * 10)
+      setProcessingProgress(loadProgress)
+      setProcessingStatus(`Loading photos... (${page}/${totalPages} pages)`)
+    }
 
-          await new Promise((resolve, reject) => {
-            img.onload = resolve
-            img.onerror = reject
-            img.src = photo.url
-          })
+    setProcessingStatus(`🔍 Analyzing ${allPhotosToCheck.length} photos...`)
+    setProcessingProgress(20)
 
-          const detections = await detectAllFaces(img)
+    // Process each photo with progress updates
+    for (let i = 0; i < allPhotosToCheck.length; i++) {
+      const photo = allPhotosToCheck[i]
+      
+      // Update progress
+      const progress = 20 + ((i / allPhotosToCheck.length) * 75)
+      setProcessingProgress(Math.round(progress))
+      setProcessingStatus(`Analyzing photo ${i + 1} of ${allPhotosToCheck.length}...`)
+      
+      try {
+        const img = new Image()
+        img.crossOrigin = 'anonymous'
 
-          if (detections && detections.length > 0) {
-            for (const detection of detections) {
-              const distance = compareFaces(
-                selfieDetection.descriptor,
-                detection.descriptor
-              )
+        await new Promise((resolve, reject) => {
+          img.onload = resolve
+          img.onerror = reject
+          img.src = photo.original_url
+        })
 
-              if (isFaceMatch(distance)) {
-                matches.push({
-                  ...photo,
-                  confidence: (1 - distance).toFixed(2)
-                })
-                break
+        const detections = await detectAllFaces(img)
+
+        if (detections && detections.length > 0) {
+          for (const detection of detections) {
+            let bestMatch = 1
+            
+            for (const reference of referenceGallery) {
+              const distance = compareFaces(reference, detection.descriptor)
+              if (distance < bestMatch) bestMatch = distance
+            }
+
+            if (bestMatch < MATCH_THRESHOLD) {
+              matched.push(photo.id)
+              
+              if (bestMatch < GALLERY_THRESHOLD && referenceGallery.length < 3) {
+                referenceGallery.push(detection.descriptor)
+                console.log(`✓ Added face to gallery (${referenceGallery.length} references)`)
               }
+              
+              break
             }
           }
-        } catch (error) {
-          console.error(`Error processing photo ${photo.id}:`, error)
         }
+      } catch (error) {
+        console.error(`Error processing photo ${photo.id}:`, error)
       }
+    }
 
-      console.log(`Found ${matches.length} matching photos`)
-      setMatchedPhotos(matches)
-      setShowMatches(true)
+    setProcessingProgress(100)
+    setProcessingStatus(`✓ Done! Found ${matched.length} matches`)
+    
+    setMatchedPhotoIds(matched)
+    
+    setTimeout(() => {
+      if (matched.length === 0) {
+        alert('No matches found 😔\n\nTry uploading a different selfie with better lighting and a clear view of your face.')
+      } else {
+        alert(`Found ${matched.length} photo${matched.length > 1 ? 's' : ''} with you! 🎉`)
+      }
+    }, 500)
+    
+  } catch (error) {
+    console.error('Error processing selfie:', error)
+    alert('Error processing selfie. Please try again.')
+  } finally {
+    setProcessing(false)
+    setProcessingProgress(0)
+    setProcessingStatus('')
+  }
+}
+
+
+  const downloadAllPhotos = async () => {
+    setDownloadingAll(true)
+    try {
+      const response = await axios.post(
+        `${apiUrl}/api/session/${sessionId}/download`,
+        [],  // Empty array = all photos
+        { responseType: 'blob' }
+      )
+
+      const url = window.URL.createObjectURL(new Blob([response.data]))
+      const link = document.createElement('a')
+      link.href = url
+      link.setAttribute('download', `all_photos_${sessionId.slice(0, 8)}.zip`)
+      document.body.appendChild(link)
+      link.click()
+      link.remove()
+      window.URL.revokeObjectURL(url)
     } catch (error) {
-      console.error('Error processing selfie:', error)
-      alert('Error processing selfie. Please try again.')
+      console.error('Error downloading photos:', error)
+      alert('Failed to download photos')
     } finally {
-      setProcessing(false)
+      setDownloadingAll(false)
     }
   }
 
-  const downloadPhotos = async () => {
-    if (matchedPhotos.length === 0) return
+  const downloadMyPhotos = async () => {
+    if (matchedPhotoIds.length === 0) {
+      alert('Please upload your selfie first to find your photos!')
+      return
+    }
 
+    setDownloadingSelection(true)
     try {
-      const photoIds = matchedPhotos.map(p => p.id)
-
       const response = await axios.post(
         `${apiUrl}/api/session/${sessionId}/download`,
-        photoIds,
+        matchedPhotoIds,
         { responseType: 'blob' }
       )
 
@@ -144,6 +248,8 @@ function UserView() {
     } catch (error) {
       console.error('Error downloading photos:', error)
       alert('Failed to download photos')
+    } finally {
+      setDownloadingSelection(false)
     }
   }
 
@@ -158,109 +264,242 @@ function UserView() {
     )
   }
 
+  // Privacy mode and no selfie uploaded yet
+  const isPrivacyMode = session.mode === 'privacy'
+  const hasUploadedSelfie = matchedPhotoIds.length > 0 || processing
+
+  // Filter photos based on checkbox
+  const displayPhotos = showOnlyMyPhotos 
+    ? photos.filter(photo => matchedPhotoIds.includes(photo.id))
+    : photos
+
   return (
     <div className="container">
-      <h1>Find Your Photos</h1>
-      <h2>{session.photo_count} photos uploaded</h2>
-
-      {!showMatches && (
-        <div className="selfie-upload">
-          <p style={{ marginBottom: '20px', color: '#666' }}>
-            Upload a selfie to find photos you're in
-          </p>
-
-          <input
-            id="selfieInput"
-            type="file"
-            accept="image/*"
-            onChange={handleSelfieUpload}
-          />
-
-          <label htmlFor="selfieInput" className="file-input-label">
-            {selfieFile ? 'Change Selfie' : 'Upload Selfie'}
-          </label>
-
-          {selfiePreview && (
-            <div className="selfie-preview">
-              <img
-                ref={selfieImageRef}
-                src={selfiePreview}
-                alt="Your selfie"
-                style={{ maxWidth: '300px', borderRadius: '12px' }}
-              />
-
-              <div style={{ marginTop: '20px' }}>
-                <button
-                  onClick={processSelfie}
-                  disabled={processing}
-                  className="btn btn-primary"
-                >
-                  {processing ? 'Processing...' : 'Find My Photos'}
-                </button>
-              </div>
-
-              {processing && (
-                <div className="loading">
-                  <div className="spinner"></div>
-                  <p>Analyzing faces...</p>
-                </div>
-              )}
-            </div>
-          )}
-        </div>
+      <h1>📸 {session.name}</h1>
+      {session.welcome_message && (
+        <p className="subtitle">{session.welcome_message}</p>
       )}
 
-      {showMatches && (
-        <div>
-          <div className="match-stats">
-            <h2>Found {matchedPhotos.length} photo{matchedPhotos.length !== 1 ? 's' : ''} with you!</h2>
-            {matchedPhotos.length > 0 && (
-              <button onClick={downloadPhotos} className="btn btn-primary" style={{ marginTop: '15px' }}>
-                Download All ({matchedPhotos.length} photos)
-              </button>
+      <div style={{ 
+        textAlign: 'center', 
+        padding: '20px', 
+        background: 'linear-gradient(135deg, #FFF5F0 0%, #FFFAF5 100%)', 
+        borderRadius: '16px',
+        marginBottom: '30px'
+      }}>
+        <p style={{ fontSize: '1.1rem', color: '#666' }}>
+          📊 {totalPhotos} photos • 
+          {isPrivacyMode ? ' 🔐 Privacy Mode' : ' 👀 Browse Mode'}
+        </p>
+        <p style={{ fontSize: '0.9rem', color: '#999', marginTop: '5px' }}>
+          {isPrivacyMode 
+            ? 'Upload your selfie to see photos you appear in'
+            : 'Browse all photos or upload selfie to find yours'}
+        </p>
+      </div>
+
+{/* Selfie Upload Section */}
+<div style={{ 
+  padding: '30px', 
+  background: 'white',
+  border: '2px solid #FF6B35',
+  borderRadius: '16px',
+  marginBottom: '30px'
+}}>
+  <h3 style={{ marginBottom: '15px', color: '#FF6B35', textAlign: 'center' }}>
+    📷 {hasUploadedSelfie ? 'Your Selfie' : 'Upload Your Selfie'}
+  </h3>
+  
+  {!selfiePreview ? (
+    <>
+      <p style={{ color: '#666', marginBottom: '20px', textAlign: 'center' }}>
+        {isPrivacyMode 
+          ? 'Upload a selfie to view photos you appear in'
+          : 'Upload a selfie to easily find and download your photos'}
+      </p>
+
+      <div style={{ textAlign: 'center' }}>
+        <input
+          id="selfieInput"
+          type="file"
+          accept="image/*"
+          onChange={handleSelfieUpload}
+        />
+        <label htmlFor="selfieInput" className="file-input-label">
+          📸 Upload Selfie
+        </label>
+      </div>
+    </>
+  ) : (
+    <div style={{ textAlign: 'center' }}>
+      <img
+        ref={selfieImageRef}
+        src={selfiePreview}
+        alt="Your selfie"
+        style={{ 
+          maxWidth: '250px', 
+          borderRadius: '12px',
+          boxShadow: '0 4px 15px rgba(0,0,0,0.2)',
+          marginBottom: '15px'
+        }}
+      />
+
+      {!processing && matchedPhotoIds.length > 0 && (
+        <p style={{ color: '#28a745', fontWeight: 'bold', marginBottom: '15px' }}>
+          ✓ Found {matchedPhotoIds.length} photo{matchedPhotoIds.length > 1 ? 's' : ''} with you!
+        </p>
+      )}
+
+      <div style={{ display: 'flex', gap: '10px', justifyContent: 'center', flexWrap: 'wrap' }}>
+        {!processing && !hasUploadedSelfie && (
+          <button
+            onClick={processSelfie}
+            className="btn btn-primary"
+          >
+            🚀 Find My Photos
+          </button>
+        )}
+        
+        <label htmlFor="selfieInput2" className="btn btn-secondary">
+          🔄 Try Different Selfie
+        </label>
+        <input
+          id="selfieInput2"
+          type="file"
+          accept="image/*"
+          onChange={(e) => {
+            handleSelfieUpload(e)
+            setMatchedPhotoIds([])  // Reset matches when changing selfie
+          }}
+          style={{ display: 'none' }}
+        />
+      </div>
+
+      {processing && (
+        <div style={{ marginTop: '20px' }}>
+          <p style={{ marginBottom: '10px', color: '#666', fontWeight: '500' }}>
+            {processingStatus}
+          </p>
+          <div className="progress-bar">
+            <div 
+              className="progress-fill" 
+              style={{ width: `${processingProgress}%` }}
+            ></div>
+          </div>
+          <p style={{ marginTop: '10px', fontSize: '0.9rem', color: '#999' }}>
+            {processingProgress}% complete • This may take a minute
+          </p>
+        </div>
+      )}
+    </div>
+  )}
+</div>
+
+
+      {/* Show Photos (Privacy mode requires selfie) */}
+      {(!isPrivacyMode || hasUploadedSelfie) && (
+        <>
+          {/* Checkbox and Download Buttons */}
+          <div style={{ marginBottom: '20px' }}>
+            {matchedPhotoIds.length > 0 && (
+              <div className="checkbox-container">
+                <input
+                  type="checkbox"
+                  id="showOnlyMine"
+                  checked={showOnlyMyPhotos}
+                  onChange={(e) => setShowOnlyMyPhotos(e.target.checked)}
+                />
+                <label htmlFor="showOnlyMine">
+                  ✅ Show only photos with me ({matchedPhotoIds.length} photos)
+                </label>
+              </div>
             )}
+
+            <div style={{ display: 'flex', gap: '10px', justifyContent: 'center', marginTop: '15px', flexWrap: 'wrap' }}>
+              <button
+                onClick={downloadAllPhotos}
+                disabled={downloadingAll}
+                className="btn btn-secondary"
+              >
+                {downloadingAll ? '⏳ Downloading...' : '📦 Download All Photos'}
+              </button>
+
+              {matchedPhotoIds.length > 0 && (
+                <button
+                  onClick={downloadMyPhotos}
+                  disabled={downloadingSelection}
+                  className="btn btn-primary"
+                >
+                  {downloadingSelection ? '⏳ Downloading...' : `📸 Download My Photos (${matchedPhotoIds.length})`}
+                </button>
+              )}
+            </div>
+
+            <p style={{ textAlign: 'center', fontSize: '0.85rem', color: '#999', marginTop: '10px' }}>
+              💡 Download original quality photos as ZIP file
+            </p>
           </div>
 
-          {matchedPhotos.length > 0 ? (
-            <div className="photo-grid">
-              {matchedPhotos.map((photo, index) => (
-                <div key={index} className="photo-item">
-                  <img src={photo.url} alt={`Match ${index + 1}`} />
+          {/* Photo Grid */}
+          {displayPhotos.length > 0 ? (
+            <>
+              <div className="photo-grid">
+                {displayPhotos.map((photo) => (
+                  <div key={photo.id} className="photo-item">
+                    <img 
+                      src={photo.thumbnail_url} 
+                      alt={photo.filename}
+                      onClick={() => window.open(photo.original_url, '_blank')}
+                    />
+                    {matchedPhotoIds.includes(photo.id) && (
+                      <div style={{
+                        position: 'absolute',
+                        top: '10px',
+                        right: '10px',
+                        background: 'rgba(255, 107, 53, 0.9)',
+                        color: 'white',
+                        padding: '5px 10px',
+                        borderRadius: '20px',
+                        fontSize: '0.8rem',
+                        fontWeight: 'bold'
+                      }}>
+                        ✓ You
+                      </div>
+                    )}
+                  </div>
+                ))}
+              </div>
+
+              {/* Pagination */}
+              {!showOnlyMyPhotos && totalPages > 1 && (
+                <div className="pagination">
+                  <button
+                    onClick={() => setCurrentPage(p => Math.max(1, p - 1))}
+                    disabled={currentPage === 1}
+                  >
+                    ← Previous
+                  </button>
+                  <span>Page {currentPage} of {totalPages}</span>
+                  <button
+                    onClick={() => setCurrentPage(p => Math.min(totalPages, p + 1))}
+                    disabled={currentPage === totalPages}
+                  >
+                    Next →
+                  </button>
                 </div>
-              ))}
-            </div>
+              )}
+            </>
           ) : (
-            <div className="no-matches">
-              <h3>No matches found</h3>
-              <p>Sorry, we couldn't find any photos with your face.</p>
-              <button
-                onClick={() => {
-                  setShowMatches(false)
-                  setSelfieFile(null)
-                  setSelfiePreview(null)
-                }}
-                className="btn btn-secondary"
-                style={{ marginTop: '20px' }}
-              >
-                Try Another Selfie
-              </button>
+            <div style={{ textAlign: 'center', padding: '60px 20px', color: '#666' }}>
+              <h3>No photos to display</h3>
+              <p style={{ marginTop: '10px' }}>
+                {showOnlyMyPhotos 
+                  ? 'No photos with you on this page. Try browsing all photos or check other pages.'
+                  : 'No photos found'}
+              </p>
             </div>
           )}
-
-          <div style={{ marginTop: '30px', textAlign: 'center' }}>
-            <button
-              onClick={() => {
-                setShowMatches(false)
-                setSelfieFile(null)
-                setSelfiePreview(null)
-                setMatchedPhotos([])
-              }}
-              className="btn btn-secondary"
-            >
-              Upload Different Selfie
-            </button>
-          </div>
-        </div>
+        </>
       )}
     </div>
   )
