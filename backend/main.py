@@ -90,7 +90,8 @@ async def create_session(files: List[UploadFile] = File(...)):
     return {
         'session_id': session_id,
         'photo_count': len(saved_files),
-        'share_url': f"http://localhost:5173/session/{session_id}"
+        'share_url': f"{os.getenv('FRONTEND_URL', 'http://localhost:5173')}/session/{session_id}"
+
     }
 
 @app.get("/api/session/{session_id}")
