@@ -136,8 +136,12 @@ function HostUpload() {
 
   return (
     <div className="container">
-      <h1>Photo Matcher</h1>
-      <h2>Upload photos and create a shareable link</h2>
+  <h1>Photo Matcher</h1>
+  <h2>Upload photos and create a shareable link</h2>
+  <p style={{ textAlign: 'center', color: '#666', fontSize: '1.1rem', marginBottom: '30px', lineHeight: '1.6' }}>
+    Upload event photos, get a shareable link. Friends upload their selfie and instantly see only photos they appear in using AI face recognition.
+  </p>
+
 
       <div
         className={`dropzone ${dragActive ? 'active' : ''}`}
