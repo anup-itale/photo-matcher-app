@@ -8,6 +8,8 @@ function HostUpload() {
   const [sessionData, setSessionData] = useState(null)
   const [dragActive, setDragActive] = useState(false)
 
+  const apiUrl = import.meta.env.VITE_API_URL || ''
+
   const handleDrag = useCallback((e) => {
     e.preventDefault()
     e.stopPropagation()
@@ -19,29 +21,23 @@ function HostUpload() {
   }, [])
 
   const handleDrop = useCallback((e) => {
-  e.preventDefault()
-  e.stopPropagation()
-  setDragActive(false)
+    e.preventDefault()
+    e.stopPropagation()
+    setDragActive(false)
 
-  console.log('Drop event files:', e.dataTransfer.files.length)
-  
-  // Log all files and their types
-  Array.from(e.dataTransfer.files).forEach(file => {
-    console.log(`File: ${file.name}, Type: ${file.type}`)
-  })
-  
-  const droppedFiles = Array.from(e.dataTransfer.files).filter(
-    file => file.type.startsWith('image/')
-  )
+    console.log('Drop event files:', e.dataTransfer.files.length)
+    
+    const droppedFiles = Array.from(e.dataTransfer.files).filter(
+      file => file.type.startsWith('image/')
+    )
 
-  console.log('Filtered image files:', droppedFiles.length)
+    console.log('Filtered image files:', droppedFiles.length)
+    console.log('Files:', droppedFiles.map(f => f.name))
 
-  if (droppedFiles.length > 0) {
-    addFiles(droppedFiles)
-  }
-}, [])
-
-
+    if (droppedFiles.length > 0) {
+      addFiles(droppedFiles)
+    }
+  }, [])
 
   const handleFileInput = (e) => {
     const selectedFiles = Array.from(e.target.files).filter(
@@ -51,20 +47,19 @@ function HostUpload() {
   }
 
   const addFiles = (newFiles) => {
-  console.log('Adding files:', newFiles.length)
-  
-  setFiles(prev => [...prev, ...newFiles])
+    console.log('Adding files:', newFiles.length)
+    
+    setFiles(prev => [...prev, ...newFiles])
 
-  newFiles.forEach((file, index) => {
-    const reader = new FileReader()
-    reader.onload = (e) => {
-      console.log('Preview loaded for:', file.name)
-      setPreviews(prev => [...prev, { file: file.name, url: e.target.result }])
-    }
-    reader.readAsDataURL(file)
-  })
-}
-
+    newFiles.forEach((file, index) => {
+      const reader = new FileReader()
+      reader.onload = (e) => {
+        console.log('Preview loaded for:', file.name)
+        setPreviews(prev => [...prev, { file: file.name, url: e.target.result }])
+      }
+      reader.readAsDataURL(file)
+    })
+  }
 
   const removeFile = (index) => {
     setFiles(prev => prev.filter((_, i) => i !== index))
@@ -82,7 +77,7 @@ function HostUpload() {
     })
 
     try {
-      const response = await axios.post('/api/host/create-session', formData, {
+      const response = await axios.post(`${apiUrl}/api/host/create-session`, formData, {
         headers: { 'Content-Type': 'multipart/form-data' }
       })
 

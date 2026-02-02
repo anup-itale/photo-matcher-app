@@ -15,6 +15,8 @@ function UserView() {
   const [showMatches, setShowMatches] = useState(false)
   const selfieImageRef = useRef(null)
 
+  const apiUrl = import.meta.env.VITE_API_URL || ''
+
   useEffect(() => {
     loadSession()
   }, [sessionId])
@@ -22,12 +24,18 @@ function UserView() {
   const loadSession = async () => {
     try {
       const [sessionRes, photosRes] = await Promise.all([
-        axios.get(`/api/session/${sessionId}`),
-        axios.get(`/api/session/${sessionId}/photos`)
+        axios.get(`${apiUrl}/api/session/${sessionId}`),
+        axios.get(`${apiUrl}/api/session/${sessionId}/photos`)
       ])
 
       setSession(sessionRes.data)
-      setPhotos(photosRes.data.photos)
+      
+      // Update photo URLs to include apiUrl
+      const photosWithFullUrls = photosRes.data.photos.map(photo => ({
+        ...photo,
+        url: `${apiUrl}${photo.url}`
+      }))
+      setPhotos(photosWithFullUrls)
     } catch (error) {
       console.error('Error loading session:', error)
       alert('Session not found')
@@ -54,7 +62,6 @@ function UserView() {
     setShowMatches(false)
 
     try {
-      // Detect face in selfie
       console.log('Detecting face in selfie...')
       const selfieDetection = await detectFace(selfieImageRef.current)
 
@@ -67,7 +74,6 @@ function UserView() {
       console.log('Face detected in selfie!')
       setUserFaceDescriptor(selfieDetection.descriptor)
 
-      // Process all photos
       const matches = []
 
       for (const photo of photos) {
@@ -81,11 +87,9 @@ function UserView() {
             img.src = photo.url
           })
 
-          // Detect all faces in this photo
           const detections = await detectAllFaces(img)
 
           if (detections && detections.length > 0) {
-            // Check if any face matches the user's face
             for (const detection of detections) {
               const distance = compareFaces(
                 selfieDetection.descriptor,
@@ -124,7 +128,7 @@ function UserView() {
       const photoIds = matchedPhotos.map(p => p.id)
 
       const response = await axios.post(
-        `/api/session/${sessionId}/download`,
+        `${apiUrl}/api/session/${sessionId}/download`,
         photoIds,
         { responseType: 'blob' }
       )
