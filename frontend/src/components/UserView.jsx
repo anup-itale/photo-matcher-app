@@ -102,7 +102,8 @@ const processSelfie = async () => {
 
     // Gallery-based matching
     const referenceGallery = [selfieDetection.descriptor]
-    const matched = []
+    const matched = []  // Use Set to ensure uniqueness
+
     const MATCH_THRESHOLD = 0.7
     const GALLERY_THRESHOLD = 0.4
 
@@ -158,7 +159,14 @@ const processSelfie = async () => {
             }
 
             if (bestMatch < MATCH_THRESHOLD) {
-              matched.push(photo.id)
+  if (bestMatch < MATCH_THRESHOLD) {
+  // Prevent duplicates
+  if (!matched.includes(photo.id)) {
+    matched.push(photo.id)
+  }
+
+
+
               
               if (bestMatch < GALLERY_THRESHOLD && referenceGallery.length < 3) {
                 referenceGallery.push(detection.descriptor)
@@ -183,13 +191,38 @@ const processSelfie = async () => {
       if (matched.length === 0) {
         alert('No matches found 😔\n\nTry uploading a different selfie with better lighting and a clear view of your face.')
       } else {
-        alert(`Found ${matched.length} photo${matched.length > 1 ? 's' : ''} with you! 🎉`)
+        alert(`Found ${matched.length} photo${matched.size > 1 ? 's' : ''} with you! 🎉`)
+
       }
     }, 500)
     
   } catch (error) {
     console.error('Error processing selfie:', error)
     alert('Error processing selfie. Please try again.')
+    // In privacy mode, reload photos to show all matches across all pages
+    if (isPrivacyMode && matched.length > 0) {
+      setProcessingStatus('Loading your photos...')
+      
+      // Load all pages to get all matched photos
+      const allMatchedPhotos = []
+      for (let page = 1; page <= totalPages; page++) {
+        const response = await axios.get(
+          `${apiUrl}/api/session/${sessionId}/photos?page=${page}&per_page=10`
+        )
+        const pagePhotos = response.data.photos.map(photo => ({
+          ...photo,
+          thumbnail_url: `${apiUrl}${photo.thumbnail_url}`,
+          original_url: `${apiUrl}${photo.original_url}`
+        })).filter(photo => matched.includes(photo.id))
+
+        
+        allMatchedPhotos.push(...pagePhotos)
+      }
+      
+      // Set all matched photos
+      setPhotos(allMatchedPhotos)
+    }
+
   } finally {
     setProcessing(false)
     setProcessingProgress(0)
@@ -266,12 +299,20 @@ const processSelfie = async () => {
 
   // Privacy mode and no selfie uploaded yet
   const isPrivacyMode = session.mode === 'privacy'
-  const hasUploadedSelfie = matchedPhotoIds.length > 0 || processing
+  // In privacy mode: only show photos after matching is complete
+// In browse mode: show photos always
+const hasUploadedSelfie = matchedPhotoIds.length > 0
+const canShowPhotos = !isPrivacyMode || (isPrivacyMode && hasUploadedSelfie && !processing)
 
-  // Filter photos based on checkbox
-  const displayPhotos = showOnlyMyPhotos 
-    ? photos.filter(photo => matchedPhotoIds.includes(photo.id))
-    : photos
+
+// In privacy mode: ALWAYS show only matched photos
+// In browse mode: filter based on checkbox
+const displayPhotos = isPrivacyMode
+  ? photos.filter(photo => matchedPhotoIds.includes(photo.id))
+  : (showOnlyMyPhotos 
+      ? photos.filter(photo => matchedPhotoIds.includes(photo.id))
+      : photos)
+
 
   return (
     <div className="container">
@@ -397,12 +438,14 @@ const processSelfie = async () => {
 
 
       {/* Show Photos (Privacy mode requires selfie) */}
-      {(!isPrivacyMode || hasUploadedSelfie) && (
+      {canShowPhotos && (
+
         <>
           {/* Checkbox and Download Buttons */}
           <div style={{ marginBottom: '20px' }}>
-            {matchedPhotoIds.length > 0 && (
-              <div className="checkbox-container">
+            {!isPrivacyMode && matchedPhotoIds.length > 0 && (
+  <div className="checkbox-container">
+
                 <input
                   type="checkbox"
                   id="showOnlyMine"
@@ -416,13 +459,16 @@ const processSelfie = async () => {
             )}
 
             <div style={{ display: 'flex', gap: '10px', justifyContent: 'center', marginTop: '15px', flexWrap: 'wrap' }}>
-              <button
-                onClick={downloadAllPhotos}
-                disabled={downloadingAll}
-                className="btn btn-secondary"
-              >
-                {downloadingAll ? '⏳ Downloading...' : '📦 Download All Photos'}
-              </button>
+              {!isPrivacyMode && (
+  <button
+    onClick={downloadAllPhotos}
+    disabled={downloadingAll}
+    className="btn btn-secondary"
+  >
+    {downloadingAll ? '⏳ Downloading...' : '📦 Download All Photos'}
+  </button>
+)}
+
 
               {matchedPhotoIds.length > 0 && (
                 <button
@@ -471,7 +517,8 @@ const processSelfie = async () => {
               </div>
 
               {/* Pagination */}
-              {!showOnlyMyPhotos && totalPages > 1 && (
+              {!isPrivacyMode && !showOnlyMyPhotos && totalPages > 1 && (
+
                 <div className="pagination">
                   <button
                     onClick={() => setCurrentPage(p => Math.max(1, p - 1))}
